@@ -10,7 +10,7 @@ GatewayIntentBits.DirectMessages,
 ]
 });
 
-const TOKEN = ‘YOUR_BOT_TOKEN_HERE’; // Replace with your bot token
+const TOKEN = process.env.TOKEN; // Replace with your bot token
 const PREFIX = ‘.’;
 
 // Store warnings per user: { guildId: { userId: count } }
