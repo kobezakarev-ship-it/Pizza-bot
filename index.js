@@ -9,7 +9,8 @@ const {
   PermissionsBitField,
   ModalBuilder,
   TextInputBuilder,
-  TextInputStyle
+  TextInputStyle,
+  AttachmentBuilder
 } = require('discord.js');
 
 const client = new Client({
@@ -20,28 +21,32 @@ const client = new Client({
   ]
 });
 
-// CONFIG
-const TICKET_CATEGORY_NAME = "Tickets";
-const LOG_CHANNEL_NAME = "ticket-logs";
+/* ================= CONFIG ================= */
 
-// DATA
+const CONFIG = {
+  ticketCategoryName: "tickets",
+  logChannelName: "ticket-logs"
+};
+
+/* ================= DATA ================= */
+
 let ticketCount = 0;
-const activeTickets = new Map();
+const tickets = new Map();
 
-// FORMAT NUMBER
+/* ================= UTIL ================= */
+
 function formatNumber(num) {
   return num.toString().padStart(2, '0');
 }
 
-// GET OR CREATE CATEGORY
-async function getCategory(guild) {
+async function getOrCreateCategory(guild) {
   let category = guild.channels.cache.find(
-    c => c.name === TICKET_CATEGORY_NAME && c.type === ChannelType.GuildCategory
+    c => c.name === CONFIG.ticketCategoryName && c.type === ChannelType.GuildCategory
   );
 
   if (!category) {
     category = await guild.channels.create({
-      name: TICKET_CATEGORY_NAME,
+      name: CONFIG.ticketCategoryName,
       type: ChannelType.GuildCategory
     });
   }
@@ -49,15 +54,14 @@ async function getCategory(guild) {
   return category;
 }
 
-// GET OR CREATE LOG CHANNEL
-async function getLogChannel(guild) {
+async function getOrCreateLogChannel(guild) {
   let channel = guild.channels.cache.find(
-    c => c.name === LOG_CHANNEL_NAME
+    c => c.name === CONFIG.logChannelName
   );
 
   if (!channel) {
     channel = await guild.channels.create({
-      name: LOG_CHANNEL_NAME,
+      name: CONFIG.logChannelName,
       type: ChannelType.GuildText
     });
   }
@@ -65,11 +69,14 @@ async function getLogChannel(guild) {
   return channel;
 }
 
+/* ================= READY ================= */
+
 client.once('ready', () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
 });
 
-// PANEL COMMAND
+/* ================= PANEL COMMAND ================= */
+
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
 
@@ -77,9 +84,9 @@ client.on('messageCreate', async (message) => {
 
     const embed = new EmbedBuilder()
       .setColor(0x2B2D31)
-      .setTitle('🎫 Support Center')
+      .setTitle('🎫 Support Panel')
       .setDescription(`
-Click the button below to create a support ticket.
+Click the button below to create a ticket.
 
 Our support team will be with you as fast as we can.
 `);
@@ -91,14 +98,19 @@ Our support team will be with you as fast as we can.
         .setStyle(ButtonStyle.Primary)
     );
 
-    message.channel.send({ embeds: [embed], components: [row] });
+    message.channel.send({
+      embeds: [embed],
+      components: [row]
+    });
   }
 });
 
-// INTERACTIONS
+/* ================= INTERACTIONS ================= */
+
 client.on('interactionCreate', async (interaction) => {
 
-  // OPEN MODAL
+  /* ---------- OPEN BUTTON ---------- */
+
   if (interaction.isButton() && interaction.customId === 'open_ticket') {
 
     const modal = new ModalBuilder()
@@ -107,29 +119,32 @@ client.on('interactionCreate', async (interaction) => {
 
     const input = new TextInputBuilder()
       .setCustomId('reason')
-      .setLabel('What do you need help with today?')
+      .setLabel('What do you need help with?')
       .setStyle(TextInputStyle.Paragraph)
       .setRequired(true);
 
-    modal.addComponents(new ActionRowBuilder().addComponents(input));
+    modal.addComponents(
+      new ActionRowBuilder().addComponents(input)
+    );
 
     return interaction.showModal(modal);
   }
 
-  // CREATE TICKET
+  /* ---------- CREATE TICKET ---------- */
+
   if (interaction.isModalSubmit() && interaction.customId === 'ticket_modal') {
 
     const reason = interaction.fields.getTextInputValue('reason');
-    const user = interaction.user;
     const guild = interaction.guild;
+    const user = interaction.user;
 
     ticketCount++;
-    const ticketNum = formatNumber(ticketCount);
+    const number = formatNumber(ticketCount);
 
-    const category = await getCategory(guild);
+    const category = await getOrCreateCategory(guild);
 
     const channel = await guild.channels.create({
-      name: `ticket-${ticketNum}`,
+      name: `ticket-${number}`,
       type: ChannelType.GuildText,
       parent: category.id,
       permissionOverwrites: [
@@ -147,10 +162,10 @@ client.on('interactionCreate', async (interaction) => {
       ]
     });
 
-    activeTickets.set(channel.id, {
+    tickets.set(channel.id, {
       owner: user.id,
-      reason: reason,
-      number: ticketNum
+      number,
+      reason
     });
 
     const embed = new EmbedBuilder()
@@ -159,7 +174,7 @@ client.on('interactionCreate', async (interaction) => {
         name: user.tag,
         iconURL: user.displayAvatarURL()
       })
-      .setTitle(`🎫 Ticket #${ticketNum}`)
+      .setTitle(`🎫 Ticket #${number}`)
       .setDescription(`
 **Request**
 \`\`\`
@@ -194,12 +209,13 @@ Our support team will be with you as fast as we can.
     });
   }
 
-  // CLOSE BUTTON
+  /* ---------- CLOSE BUTTON ---------- */
+
   if (interaction.isButton() && interaction.customId === 'close_ticket') {
 
     if (!interaction.member.permissions.has(PermissionsBitField.Flags.ModerateMembers)) {
       return interaction.reply({
-        content: '❌ You must have timeout permission to close tickets.',
+        content: '❌ You need timeout permission to close tickets.',
         ephemeral: true
       });
     }
@@ -210,47 +226,53 @@ Our support team will be with you as fast as we can.
 
     const input = new TextInputBuilder()
       .setCustomId('reason')
-      .setLabel('Why do you want to close this ticket?')
+      .setLabel('Reason for closing')
       .setStyle(TextInputStyle.Paragraph)
       .setRequired(true);
 
-    modal.addComponents(new ActionRowBuilder().addComponents(input));
+    modal.addComponents(
+      new ActionRowBuilder().addComponents(input)
+    );
 
     return interaction.showModal(modal);
   }
 
-  // CLOSE MODAL
+  /* ---------- CLOSE HANDLER ---------- */
+
   if (interaction.isModalSubmit() && interaction.customId === 'close_modal') {
 
     const reason = interaction.fields.getTextInputValue('reason');
     const channel = interaction.channel;
     const guild = interaction.guild;
 
-    const ticketData = activeTickets.get(channel.id);
+    const data = tickets.get(channel.id);
 
-    // FETCH MESSAGES FOR TRANSCRIPT
-    let messages = await channel.messages.fetch({ limit: 100 });
-    messages = messages.map(m => `${m.author.tag}: ${m.content}`).reverse().join('\n');
+    // FETCH MESSAGES
+    let msgs = await channel.messages.fetch({ limit: 100 });
+    const content = msgs
+      .map(m => `${m.author.tag}: ${m.content}`)
+      .reverse()
+      .join('\n');
 
-    const logChannel = await getLogChannel(guild);
+    const buffer = Buffer.from(content, 'utf-8');
+    const file = new AttachmentBuilder(buffer, {
+      name: `transcript-${channel.name}.txt`
+    });
+
+    const logChannel = await getOrCreateLogChannel(guild);
 
     const logEmbed = new EmbedBuilder()
       .setColor(0xFF0000)
-      .setTitle(`📁 Ticket Closed #${ticketData?.number || "Unknown"}`)
+      .setTitle(`📁 Ticket Closed #${data?.number || "??"}`)
       .addFields(
         { name: 'Closed By', value: `<@${interaction.user.id}>` },
         { name: 'Reason', value: reason }
       )
       .setTimestamp();
 
-    logChannel.send({
+    await logChannel.send({
       embeds: [logEmbed],
-      files: [
-        {
-          attachment: Buffer.from(messages, 'utf-8'),
-          name: `transcript-${channel.name}.txt`
-        }
-      ]
+      files: [file]
     });
 
     await interaction.reply({
@@ -264,4 +286,6 @@ Our support team will be with you as fast as we can.
 
 });
 
-client.login('YOUR_BOT_TOKEN');
+/* ================= LOGIN ================= */
+
+client.login(process.env.DISCORD_TOKEN);
