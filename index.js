@@ -1,6 +1,7 @@
 const {
   Client,
   GatewayIntentBits,
+  PermissionFlagsBits,
   EmbedBuilder,
   ActionRowBuilder,
   ButtonBuilder,
@@ -9,159 +10,187 @@ const {
   PermissionsBitField,
   ModalBuilder,
   TextInputBuilder,
-  TextInputStyle
+  TextInputStyle,
+  Partials
 } = require('discord.js');
 
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent
-  ]
+    GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildMembers,
+  ],
+  partials: [Partials.Channel],
 });
 
-let ticketCount = 0;
+let ticketCounter = 0;
+const openTickets = new Map();
 
-// READY
 client.once('ready', () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
 });
 
-// COMMAND TO SEND PANEL
 client.on('messageCreate', async (message) => {
-  if (message.author.bot) return;
 
-  if (message.content === '.ticket') {
+  if (message.author.bot) return;
+  if (!message.content.startsWith('.')) return;
+
+  const args = message.content.slice(1).trim().split(/ +/);
+  const command = args.shift().toLowerCase();
+
+  // TICKET PANEL
+  if (command === 'ticket') {
 
     const embed = new EmbedBuilder()
+      .setColor(0x5865F2)
       .setTitle('🎫 Support Tickets')
-      .setDescription(
-`Need assistance? Open a ticket and our team will help you as soon as possible.
-
-**How to open a ticket:**
-Click the button below and fill out the form.
-
-**Rules:**
-Do not ping staff repeatedly. Stay patient and we will be with you when we can.`
-      );
+      .setDescription('Click below to create a support ticket.');
 
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
-        .setCustomId('open_ticket')
+        .setCustomId('create_ticket')
         .setLabel('Create Ticket')
         .setStyle(ButtonStyle.Primary)
     );
 
-    message.channel.send({ embeds: [embed], components: [row] });
+    return message.channel.send({
+      embeds: [embed],
+      components: [row]
+    });
   }
 });
 
-// INTERACTIONS
 client.on('interactionCreate', async (interaction) => {
-  try {
 
-    // BUTTON CLICK
-    if (interaction.isButton() && interaction.customId === 'open_ticket') {
+  // CREATE TICKET BUTTON → MODAL
+  if (interaction.isButton() && interaction.customId === 'create_ticket') {
 
-      const modal = new ModalBuilder()
-        .setCustomId('ticket_modal')
-        .setTitle('Create Ticket');
-
-      const input = new TextInputBuilder()
-        .setCustomId('reason')
-        .setLabel('What do you need help with?')
-        .setStyle(TextInputStyle.Paragraph)
-        .setRequired(true);
-
-      modal.addComponents(
-        new ActionRowBuilder().addComponents(input)
-      );
-
-      return interaction.showModal(modal);
+    if (openTickets.has(interaction.user.id)) {
+      return interaction.reply({
+        content: '❌ You already have a ticket.',
+        ephemeral: true
+      });
     }
 
-    // MODAL SUBMIT
-    if (interaction.isModalSubmit() && interaction.customId === 'ticket_modal') {
+    const modal = new ModalBuilder()
+      .setCustomId('ticket_modal')
+      .setTitle('Support Ticket');
 
-      await interaction.deferReply({ ephemeral: true });
+    const input = new TextInputBuilder()
+      .setCustomId('ticket_reason')
+      .setLabel('What do you need help with today?')
+      .setStyle(TextInputStyle.Paragraph)
+      .setRequired(true);
 
-      const reason = interaction.fields.getTextInputValue('reason');
-      const guild = interaction.guild;
-      const user = interaction.user;
+    const row = new ActionRowBuilder().addComponents(input);
+    modal.addComponents(row);
 
-      ticketCount++;
-      const ticketNumber = ticketCount.toString().padStart(2, '0');
+    return interaction.showModal(modal);
+  }
 
-      // CREATE CHANNEL
-      const channel = await guild.channels.create({
-        name: `ticket-${ticketNumber}`,
-        type: ChannelType.GuildText,
-        permissionOverwrites: [
-          {
-            id: guild.roles.everyone,
-            deny: [PermissionsBitField.Flags.ViewChannel]
-          },
-          {
-            id: user.id,
-            allow: [
-              PermissionsBitField.Flags.ViewChannel,
-              PermissionsBitField.Flags.SendMessages
-            ]
-          }
-        ]
-      });
+  // HANDLE CREATE MODAL
+  if (interaction.isModalSubmit() && interaction.customId === 'ticket_modal') {
 
-      // TICKET MESSAGE
-      const embed = new EmbedBuilder()
-        .setTitle(`🎫 Ticket ${ticketNumber}`)
-        .setDescription(
-`**Issue:**
+    const reason = interaction.fields.getTextInputValue('ticket_reason');
+    const guild = interaction.guild;
+    const user = interaction.user;
+
+    ticketCounter++;
+
+    const channel = await guild.channels.create({
+      name: `ticket-${ticketCounter}`,
+      type: ChannelType.GuildText,
+      permissionOverwrites: [
+        {
+          id: guild.roles.everyone,
+          deny: [PermissionsBitField.Flags.ViewChannel],
+        },
+        {
+          id: user.id,
+          allow: [
+            PermissionsBitField.Flags.ViewChannel,
+            PermissionsBitField.Flags.SendMessages,
+          ],
+        },
+        {
+          id: guild.roles.everyone,
+          allow: [],
+        },
+      ],
+    });
+
+    openTickets.set(user.id, channel.id);
+
+    const embed = new EmbedBuilder()
+      .setColor(0x5865F2)
+      .setTitle(`🎫 Ticket opened by ${user.tag}`)
+      .setDescription(
+`**Request**
 ${reason}
 
-Our support team will be with you as fast as we can.
-
-**Rules:**
-Do not ping staff repeatedly. Stay patient and we will be with you when we can.`
-        );
-
-      const row = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId('close_ticket')
-          .setLabel('Close')
-          .setStyle(ButtonStyle.Danger)
+Please be patient for staff to reply.
+Do not ping staff repeatedly.`
       );
 
-      await channel.send({
-        content: `<@${user.id}>`,
-        embeds: [embed],
-        components: [row]
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId('close_ticket')
+        .setLabel('Close Ticket')
+        .setStyle(ButtonStyle.Danger)
+    );
+
+    await channel.send({
+      content: `<@${user.id}>`,
+      embeds: [embed],
+      components: [row]
+    });
+
+    await interaction.reply({
+      content: `✅ Ticket created: ${channel}`,
+      ephemeral: true
+    });
+  }
+
+  // CLOSE BUTTON → MODAL
+  if (interaction.isButton() && interaction.customId === 'close_ticket') {
+
+    if (!interaction.member.permissions.has(PermissionFlagsBits.ModerateMembers)) {
+      return interaction.reply({
+        content: '❌ You need timeout permissions to close tickets.',
+        ephemeral: true
       });
-
-      await interaction.editReply({
-        content: `✅ Ticket created: ${channel}`
-      });
     }
 
-    // CLOSE BUTTON
-    if (interaction.isButton() && interaction.customId === 'close_ticket') {
+    const modal = new ModalBuilder()
+      .setCustomId('close_modal')
+      .setTitle('Close Ticket');
 
-      await interaction.reply({ content: '🔒 Closing ticket in 3 seconds...' });
+    const input = new TextInputBuilder()
+      .setCustomId('close_reason')
+      .setLabel('Why do you want to close this ticket?')
+      .setStyle(TextInputStyle.Paragraph)
+      .setRequired(true);
 
-      setTimeout(() => {
-        interaction.channel.delete().catch(() => {});
-      }, 3000);
-    }
+    const row = new ActionRowBuilder().addComponents(input);
+    modal.addComponents(row);
 
-  } catch (err) {
-    console.error("ERROR:", err);
+    return interaction.showModal(modal);
+  }
 
-    if (interaction.replied || interaction.deferred) {
-      interaction.followUp({ content: '❌ Error occurred', ephemeral: true });
-    } else {
-      interaction.reply({ content: '❌ Error occurred', ephemeral: true });
-    }
+  // HANDLE CLOSE MODAL
+  if (interaction.isModalSubmit() && interaction.customId === 'close_modal') {
+
+    const reason = interaction.fields.getTextInputValue('close_reason');
+
+    await interaction.reply({
+      content: `🔒 Ticket closing...\nReason: ${reason}`
+    });
+
+    setTimeout(() => {
+      interaction.channel.delete().catch(() => {});
+    }, 3000);
   }
 });
 
-// LOGIN
 client.login(process.env.DISCORD_TOKEN);
