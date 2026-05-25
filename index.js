@@ -1,7 +1,6 @@
 const {
   Client,
   GatewayIntentBits,
-  PermissionFlagsBits,
   EmbedBuilder,
   ActionRowBuilder,
   ButtonBuilder,
@@ -10,144 +9,84 @@ const {
   PermissionsBitField,
   ModalBuilder,
   TextInputBuilder,
-  TextInputStyle,
-  Partials
+  TextInputStyle
 } = require('discord.js');
 
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent,
-    GatewayIntentBits.GuildMembers,
-    GatewayIntentBits.GuildMessageReactions,
-  ],
-  partials: [Partials.Message, Partials.Channel, Partials.Reaction],
+    GatewayIntentBits.MessageContent
+  ]
 });
 
-let ticketCounter = 0;
-const openTickets = new Map();
-const timedBans = new Map();
+// CONFIG
+const TICKET_CATEGORY_NAME = "Tickets";
+const LOG_CHANNEL_NAME = "ticket-logs";
 
-function parseDuration(str) {
-  if (!str) return null;
-  const s = str.toLowerCase().trim();
-  if (s === 'month') return 31 * 24 * 60 * 60 * 1000;
-  const match = s.match(/^(\d+)(s|m|h|d)$/);
-  if (!match) return null;
-  const value = parseInt(match[1]);
-  const unitMap = { s: 1000, m: 60000, h: 3600000, d: 86400000 };
-  return value * unitMap[match[2]];
+// DATA
+let ticketCount = 0;
+const activeTickets = new Map();
+
+// FORMAT NUMBER
+function formatNumber(num) {
+  return num.toString().padStart(2, '0');
 }
 
-function getUserFromMention(message) {
-  const mention = message.mentions.users.first();
-  if (mention) return mention;
-  const id = message.content.match(/\d{17,20}/)?.[0];
-  if (!id) return null;
-  return { id };
+// GET OR CREATE CATEGORY
+async function getCategory(guild) {
+  let category = guild.channels.cache.find(
+    c => c.name === TICKET_CATEGORY_NAME && c.type === ChannelType.GuildCategory
+  );
+
+  if (!category) {
+    category = await guild.channels.create({
+      name: TICKET_CATEGORY_NAME,
+      type: ChannelType.GuildCategory
+    });
+  }
+
+  return category;
+}
+
+// GET OR CREATE LOG CHANNEL
+async function getLogChannel(guild) {
+  let channel = guild.channels.cache.find(
+    c => c.name === LOG_CHANNEL_NAME
+  );
+
+  if (!channel) {
+    channel = await guild.channels.create({
+      name: LOG_CHANNEL_NAME,
+      type: ChannelType.GuildText
+    });
+  }
+
+  return channel;
 }
 
 client.once('ready', () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
-
-  setInterval(async () => {
-    const now = Date.now();
-    for (const [userId, data] of timedBans) {
-      if (now >= data.unbanAt) {
-        try {
-          const guild = await client.guilds.fetch(data.guildId);
-          await guild.members.unban(userId);
-        } catch {}
-        timedBans.delete(userId);
-      }
-    }
-  }, 10000);
 });
 
+// PANEL COMMAND
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
-  if (!message.content.startsWith('.')) return;
 
-  const args = message.content.slice(1).trim().split(/ +/);
-  const command = args.shift().toLowerCase();
+  if (message.content === '.ticket') {
 
-  // HELP
-  if (command === 'help') {
     const embed = new EmbedBuilder()
-      .setColor(0x5865F2)
-      .setTitle('🤖 Bot Commands')
-      .setDescription(`
-🛡️ Moderation
-.ban @user
-.unban id
-.kick @user
-.warn @user
-.timeout @user
-
-📨 Utility
-.ticket
-
-📂 Applications
-.open sa | mta | mma | tha
-.close sa | mta | mma | tha
-`);
-    return message.channel.send({ embeds: [embed] });
-  }
-
-  // MODERATION (same as yours, unchanged)
-  if (command === 'kick') {
-    if (!message.member.permissions.has(PermissionFlagsBits.KickMembers)) return;
-    const user = getUserFromMention(message);
-    if (!user) return;
-    const target = await message.guild.members.fetch(user.id).catch(() => null);
-    if (!target) return;
-    await target.kick().catch(() => {});
-    message.channel.send(`✅ Kicked ${target.user.tag}`);
-  }
-
-  if (command === 'ban') {
-    if (!message.member.permissions.has(PermissionFlagsBits.BanMembers)) return;
-    const user = getUserFromMention(message);
-    if (!user) return;
-
-    let durationMs = parseDuration(args[1]);
-
-    await message.guild.members.ban(user.id).catch(() => {});
-    if (durationMs) {
-      timedBans.set(user.id, {
-        guildId: message.guild.id,
-        unbanAt: Date.now() + durationMs
-      });
-    }
-
-    message.channel.send(`🔨 Banned ${user.id}`);
-  }
-
-  if (command === 'timeout') {
-    if (!message.member.permissions.has(PermissionFlagsBits.ModerateMembers)) return;
-    const user = getUserFromMention(message);
-    if (!user) return;
-    const target = await message.guild.members.fetch(user.id).catch(() => null);
-    if (!target) return;
-
-    const duration = parseDuration(args[1] || '10m');
-    if (!duration) return;
-
-    await target.timeout(duration).catch(() => {});
-    message.channel.send(`⏱️ Timed out ${target.user.tag}`);
-  }
-
-  // TICKET PANEL
-  if (command === 'ticket') {
-    const embed = new EmbedBuilder()
-      .setColor(0x5865F2)
+      .setColor(0x2B2D31)
       .setTitle('🎫 Support Center')
-      .setDescription('Click below to contact support.');
+      .setDescription(`
+Click the button below to create a support ticket.
+
+Our support team will be with you as fast as we can.
+`);
 
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
-        .setCustomId('create_ticket')
+        .setCustomId('open_ticket')
         .setLabel('Open Ticket')
         .setStyle(ButtonStyle.Primary)
     );
@@ -156,14 +95,11 @@ client.on('messageCreate', async (message) => {
   }
 });
 
+// INTERACTIONS
 client.on('interactionCreate', async (interaction) => {
 
   // OPEN MODAL
-  if (interaction.isButton() && interaction.customId === 'create_ticket') {
-
-    if (openTickets.has(interaction.user.id)) {
-      return interaction.reply({ content: '❌ You already have a ticket.', ephemeral: true });
-    }
+  if (interaction.isButton() && interaction.customId === 'open_ticket') {
 
     const modal = new ModalBuilder()
       .setCustomId('ticket_modal')
@@ -187,41 +123,85 @@ client.on('interactionCreate', async (interaction) => {
     const user = interaction.user;
     const guild = interaction.guild;
 
-    ticketCounter++;
+    ticketCount++;
+    const ticketNum = formatNumber(ticketCount);
+
+    const category = await getCategory(guild);
 
     const channel = await guild.channels.create({
-      name: `ticket-${ticketCounter}`,
+      name: `ticket-${ticketNum}`,
       type: ChannelType.GuildText,
+      parent: category.id,
       permissionOverwrites: [
-        { id: guild.roles.everyone, deny: [PermissionsBitField.Flags.ViewChannel] },
-        { id: user.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages] }
-      ],
+        {
+          id: guild.roles.everyone,
+          deny: [PermissionsBitField.Flags.ViewChannel]
+        },
+        {
+          id: user.id,
+          allow: [
+            PermissionsBitField.Flags.ViewChannel,
+            PermissionsBitField.Flags.SendMessages
+          ]
+        }
+      ]
     });
 
-    openTickets.set(user.id, channel.id);
+    activeTickets.set(channel.id, {
+      owner: user.id,
+      reason: reason,
+      number: ticketNum
+    });
 
     const embed = new EmbedBuilder()
-      .setColor(0x5865F2)
-      .setTitle(`🎫 Ticket opened by ${user.tag}`)
-      .setDescription(`**Request**\n${reason}\n\nPlease be patient for staff.\nDo not ping repeatedly.`);
+      .setColor(0x2B2D31)
+      .setAuthor({
+        name: user.tag,
+        iconURL: user.displayAvatarURL()
+      })
+      .setTitle(`🎫 Ticket #${ticketNum}`)
+      .setDescription(`
+**Request**
+\`\`\`
+${reason}
+\`\`\`
+
+Our support team will be with you as fast as we can.
+
+**Rules**
+> Do not ping staff repeatedly  
+> Stay patient and we will be with you when we can
+`)
+      .setTimestamp();
 
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId('close_ticket')
         .setLabel('Close Ticket')
         .setStyle(ButtonStyle.Danger)
+        .setEmoji('🔒')
     );
 
-    await channel.send({ content: `<@${user.id}>`, embeds: [embed], components: [row] });
+    await channel.send({
+      content: `<@${user.id}>`,
+      embeds: [embed],
+      components: [row]
+    });
 
-    interaction.reply({ content: `✅ Ticket created: ${channel}`, ephemeral: true });
+    await interaction.reply({
+      content: `✅ Ticket created: ${channel}`,
+      ephemeral: true
+    });
   }
 
   // CLOSE BUTTON
   if (interaction.isButton() && interaction.customId === 'close_ticket') {
 
-    if (!interaction.member.permissions.has(PermissionFlagsBits.ModerateMembers)) {
-      return interaction.reply({ content: '❌ No permission.', ephemeral: true });
+    if (!interaction.member.permissions.has(PermissionsBitField.Flags.ModerateMembers)) {
+      return interaction.reply({
+        content: '❌ You must have timeout permission to close tickets.',
+        ephemeral: true
+      });
     }
 
     const modal = new ModalBuilder()
@@ -230,7 +210,7 @@ client.on('interactionCreate', async (interaction) => {
 
     const input = new TextInputBuilder()
       .setCustomId('reason')
-      .setLabel('Why are you closing this ticket?')
+      .setLabel('Why do you want to close this ticket?')
       .setStyle(TextInputStyle.Paragraph)
       .setRequired(true);
 
@@ -243,15 +223,45 @@ client.on('interactionCreate', async (interaction) => {
   if (interaction.isModalSubmit() && interaction.customId === 'close_modal') {
 
     const reason = interaction.fields.getTextInputValue('reason');
+    const channel = interaction.channel;
+    const guild = interaction.guild;
+
+    const ticketData = activeTickets.get(channel.id);
+
+    // FETCH MESSAGES FOR TRANSCRIPT
+    let messages = await channel.messages.fetch({ limit: 100 });
+    messages = messages.map(m => `${m.author.tag}: ${m.content}`).reverse().join('\n');
+
+    const logChannel = await getLogChannel(guild);
+
+    const logEmbed = new EmbedBuilder()
+      .setColor(0xFF0000)
+      .setTitle(`📁 Ticket Closed #${ticketData?.number || "Unknown"}`)
+      .addFields(
+        { name: 'Closed By', value: `<@${interaction.user.id}>` },
+        { name: 'Reason', value: reason }
+      )
+      .setTimestamp();
+
+    logChannel.send({
+      embeds: [logEmbed],
+      files: [
+        {
+          attachment: Buffer.from(messages, 'utf-8'),
+          name: `transcript-${channel.name}.txt`
+        }
+      ]
+    });
 
     await interaction.reply({
       content: `🔒 Closing ticket...\nReason: ${reason}`
     });
 
     setTimeout(() => {
-      interaction.channel.delete().catch(() => {});
-    }, 3000);
+      channel.delete().catch(() => {});
+    }, 4000);
   }
+
 });
 
-client.login(process.env.DISCORD_TOKEN);
+client.login('YOUR_BOT_TOKEN');
