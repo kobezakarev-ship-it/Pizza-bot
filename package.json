@@ -1,12 +1,13 @@
 {
-  "name": "vrmodz-discord-bot",
-  "version": "1.0.0",
-  "description": "Discord moderation + GD game bot",
-  "main": "index.js",
-  "scripts": {
-    "start": "node index.js"
-  },
-  "dependencies": {
-    "discord.js": "^14.14.1"
-  }
+    "name": "vrmodz-discord-bot",
+    "version": "1.0.0",
+    "description": "Discord moderation + GD game",
+    "main": "index.js",
+    "scripts": {
+        "start": "node index.js"
+    },
+    "dependencies": {
+        "discord.js": "^14.14.1",
+        "form-data": "^4.0.0"
+    }
 }
